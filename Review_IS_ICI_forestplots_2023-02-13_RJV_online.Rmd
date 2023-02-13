@@ -1,0 +1,760 @@
+---
+title: "ICI immunosuppression review"
+author: "Rik J. Verheijden"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+---
+
+# Prepare workspace
+
+Empty workspace
+```{r echo = T, eval = T}
+rm(list = ls())
+```
+
+Set working directory
+```{r echo = F, eval = T}
+setwd("filepath/folder")
+```
+
+Install required packages
+```{r echo = T, eval = F, warning = F, error=F, message=F}
+install.packages("readxl")
+install.packages("dplyr")
+install.packages("ggplot2")
+install.packages("ggpubr")
+```
+
+Activate packages
+```{r echo = T, eval = T, warning = F, error=T, message=F}
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+```
+
+#Load Excel file
+
+Define file path: change to file label of input file; note that file label should end with .xlsx
+```{r echo = T, eval = T, warning = T, error=T, message=T}
+path <- "Review_IS_ICI_forestplot_data_2023-02-10_RJV.xlsx"
+```
+
+Load all Excel sheets as separate labeld data frames automatically
+```{r echo = T, eval = T, warning = T, error=T, message=T}
+for (i in excel_sheets(path)) {
+  assign(i, read_xlsx(path, sheet = i))
+}
+rm(i,path)
+
+```
+
+Some formatting:
+
+-   Change commas to dots
+-   Right-align y-axis labels
+-   Sort y-axis labels by cut-off dose (if mg/kg: reference person of 70kg assumed)
+-   Add and right-align references
+
+```{r echo = T, eval = T, warning = T, error=T, message=T}
+#glucocorticoids
+glucocorticoids$IS_dose <- gsub(",",".",glucocorticoids$IS_dose)
+glucocorticoids$IS_dose_70 <- as.numeric(glucocorticoids$IS_dose_70)
+glucocorticoids$label <- gsub(",",".",glucocorticoids$label)
+glucocorticoids$label <- format(glucocorticoids$label, width = max(nchar(as.character(glucocorticoids$label))), justify = "right")
+glucocorticoids$label <- factor(factor(glucocorticoids$label), levels = as.vector(glucocorticoids[order(glucocorticoids$IS_dose_70, decreasing = T),]$label))
+glucocorticoids$ref <-  format(glucocorticoids$ref, width = max(nchar(as.character(glucocorticoids$ref))), justify = "right")
+# glucocorticoids$ref <- ""
+
+#2L_IS
+`2L_IS`$IS_dose <- gsub(",", ".", `2L_IS`$IS_dose)
+`2L_IS`$label <- gsub(",", ".", `2L_IS`$label)
+`2L_IS`$label <- paste0(format(`2L_IS`$label, width = max(nchar(as.character(`2L_IS`$label))), justify = "right"))
+`2L_IS`$label <- factor(factor(`2L_IS`$label), levels = as.vector(`2L_IS`[order(`2L_IS`$IS_dose, decreasing = T),]$label))
+`2L_IS`$ref <- paste0(format(`2L_IS`$ref, width = max(nchar(as.character(`2L_IS`$ref))), justify = "right"))
+# `2L_IS`$ref <- ""
+```
+
+# glucorticoids
+
+We will now make Figure 2 of the review.
+
+Specify which data to use
+```{r echo = T, eval = T, warning = T, error=T, message=T}
+data <- glucocorticoids
+```
+
+Add reference number to row label in superscript
+```{r echo = T, eval = T, warning = T, error=T, message=T}
+data <- data.frame(data)
+labels <- lapply(1:nrow(data), FUN = function(x) bquote(.(as.character(data[x,"label"])) ^ .(as.character(data[x,"ref"]))))
+names(labels) <- data$label
+```
+
+Specify desired columns to use for dots
+```{r echo = T, eval = T, warning = T, error=T, message=T}
+dot <- c("control_group", "ICI_homogeneous", "tumour_homogeneous", "irAE_homogeneous", "indication_IS_irAE", 'immortal_time_bias')
+```
+
+Changes values to `+`, `-`, `X` or `?` depending on input.
+
+```{r echo = T, eval = T, warning = T, error=T, message=T}
+for (i in dot){
+  data$i<- data.frame(data)[,i]
+  data[,i]<- factor(dplyr::recode(data$i,
+                                  "low"="+", "Low"="+",
+                                  "some concerns"="-", "Some concerns"="-", "Some Concerns"="-", "intermediate"="-", "Intermediate"="-", "adjusted"="-", "Adjusted"="-",
+                                  "high"="X", "High"="X",
+                                  "unclear"="?", "Unclear"="?", "no information"="?", "No information"="?", "No Information"="?")
+                    , levels = c("+", "-", "X", "?"))
+  data$i <- NULL
+}
+```
+
+## glucocorticoids - OS
+
+Store data and select only patients for OS part of the plot
+```{r echo = T, eval = T, warning = T, error=T, message=T}
+data_backup <- data
+data<- data[!is.na(data$n_OS),]
+```
+
+Determine maximum number of patients per study to scale point in forrest plot
+```{r echo = T, eval = T, warning = T, error=T, message=T}
+n_max_subset = max(data$n_OS, na.rm = T)
+n_max_subset
+```
+
+Prespecify some values for the plot
+```{r echo = T, eval = T, warning = T, error=T, message=T}
+pointsize = 10
+textsize = 12
+n_max_total = 500
+colorlegendtitle = "daily dose cut-off (mg)"
+sizelegendtitle = "sample size"
+```
+
+Make base layer of forrest plot
+```{r echo = T, eval = T, warning = T, error=T, message=T}
+forrest_base <- ggplot(data, aes(y = label))+
+  geom_vline(aes(xintercept=1), linetype = "longdash", color = "darkgrey")+
+  scale_size_area(sizelegendtitle, max_size = 6*n_max_subset/n_max_total)+
+  scale_x_continuous(trans = "log10")+
+  coord_cartesian(xlim = c(.1,10), expand = T)+
+  scale_fill_viridis_c(colorlegendtitle, direction = 1)+
+  # scale_fill_viridis_d()+
+  theme(legend.position = "none"
+        # ,legend.key = element_rect(fill = "white")
+        ,plot.title = element_text(hjust =0.5, size=textsize, face = "bold")
+        ,panel.background = element_blank()
+        # ,panel.grid.major = element_line(color = "lightgrey")
+        ,axis.line.x = element_line(color = "black")
+        ,axis.ticks.y = element_blank()
+        ,axis.text.y = element_text(size = textsize, face = "bold", color = "black")
+        ,axis.title.y = element_blank()
+        ,axis.text.x = element_text(size = textsize, color = "black")
+        ,axis.title.x = element_text(size = textsize)
+        # ,plot.margin=unit(c(5,0,0,0), units = "lines")
+        )
+```
+
+Make basis layer for table part of the plot
+```{r echo = T, eval = T, warning = T, error=T, message=T}
+tab_base <- ggplot(data, aes(x=1, y=label)) +
+  labs(y=NULL, x= " ") + 
+  theme(legend.position="none"
+        ,plot.title = element_text(hjust=0.5, size=textsize, face = "bold") ## centering title on text
+        ,axis.text.x=element_text(color="white", size = textsize) ## need text to be printed so it stays aligned with figure but white so it's invisible
+        ,axis.title.x=element_text(color="white", size = textsize)
+        ,axis.line=element_blank()
+        ,axis.text.y=element_blank()
+        ,axis.title.y=element_blank()
+        ,panel.background=element_blank()
+        ,axis.ticks=element_blank()
+        # ,plot.margin=unit(c(30,0,0,0), units = "points")
+        )
+```
+
+Make basis layer for dot part of the plot. We use the colors used in the [risk of bias tools that are propagated by the Cochrane Collaboration](riskofbias.info) from the [robvis package](https://github.com/mcguinlu/robvis).
+```{r echo = T, eval = T, warning = T, error=T, message=T}
+dot_base <- ggplot(data, aes(x=1, y=label)) +
+  labs(y=NULL, x= " ") + 
+  scale_colour_manual(values = c("+"="#02C100", "-"="#E2DF07", "X"="#BF0000", "?"="#4EA1F7"))+
+  theme(legend.position="none"
+        ,plot.title = element_text(hjust=0.5, size=textsize, face = "bold") ## centering title on text
+        ,axis.text.x=element_text(color="white", size = textsize) ## need text to be printed so it stays aligned with figure but white so it's invisible
+        ,axis.title.x=element_text(color="white", size = textsize)
+        ,axis.line=element_blank()
+        ,axis.text.y=element_blank()
+        ,axis.title.y=element_blank()
+        ,panel.background=element_blank()
+        ,axis.ticks=element_blank()
+        # ,plot.margin=unit(c(30,0,0,0), units = "points")
+        )
+```
+
+Make the forrest plot
+```{r echo = T, eval = T, warning = T, error=T, message=T}
+p <- forrest_base +
+  geom_linerange(aes(xmin = HR_OS_CI_lower, xmax = HR_OS_CI_upper)
+  ) + geom_point(aes(x = HR_OS
+                     , size = n_OS
+                     # , fill = IS_dose_70
+                     )
+                 , shape = 22
+                 , fill = "black"
+  ) + scale_y_discrete(labels = labels
+  ) + labs(x = "hazard ratio (95% CI)"
+       ,title = "Overall Survival"
+  )
+```
+
+Add arrowhead if confidence band exceeds axis limits
+```{r echo = T, eval = T, warning = T, error=T, message=T}
+if(nrow(data[data$HR_OS_CI_upper>10,])>0){
+  p<- p + 
+    geom_segment(data = data[data$HR_OS_CI_upper>10,]
+                 ,aes(x = HR_OS_CI_lower, xend = Inf, yend = label)
+                 ,arrow=arrow(length = unit(.3, "cm"), type = "closed")
+    )
+}
+```
+
+Make table part of plot
+```{r echo = T, eval = T, warning = T, error=T, message=T}
+n <- tab_base + 
+  geom_text(aes(label = n_OS)
+  ) + labs(title = "n"
+  )
+
+HR <- tab_base +
+  geom_text(aes(label = paste0(format(round(HR_OS,2),nsmall=2,scientific=FALSE)," (",format(round(HR_OS_CI_lower,2),nsmall=2,scientific=FALSE),"; ", format(round(HR_OS_CI_upper,2),nsmall=2,scientific=FALSE),")"))
+  ) + labs(title = "HR (95% CI)"
+  )
+
+dose <- tab_base +
+  geom_text(aes(label = IS_dose)
+  ) + labs(title = "dose cut-off"
+  )
+```
+
+Make dot-part of plot
+```{r echo = T, eval = T, warning = T, error=T, message=T}
+ICI <-dot_base +
+  geom_point(aes(color = ICI_homogeneous), size = pointsize, shape = 16
+  ) + geom_text(aes(label = ICI_homogeneous), fontface = "bold"
+  ) + labs(title = "ICI"
+  )
+
+tumour <- dot_base +
+  geom_point(aes(color = tumour_homogeneous), size = pointsize, shape = 16
+  ) + geom_text(aes(label = tumour_homogeneous), fontface = "bold"
+  ) + labs(title = "tumour"
+  )
+
+irAE <- dot_base +
+  geom_point(aes(color = irAE_homogeneous), size = pointsize, shape = 16
+  ) + geom_text(aes(label = irAE_homogeneous), fontface = "bold"
+  ) + labs(title = "irAE type"
+  )
+
+indication <- dot_base +
+  geom_point(aes(color = indication_IS_irAE), size = pointsize, shape = 16
+  ) + geom_text(aes(label =indication_IS_irAE), fontface = "bold"
+  ) + labs(title = "indication=irAE"
+  )
+
+immortal_time_bias <- dot_base +
+  geom_point(aes(color = immortal_time_bias), size = pointsize, shape = 16
+  ) + geom_text(aes(label =immortal_time_bias), fontface = "bold"
+  ) + labs(title = "immortal time"
+  )
+```
+
+Combine all above together into one plot
+```{r echo = T, eval = T, warning = T, error=T, message=T}
+forrest_GC_OS <- ggarrange(p,HR,n,dose,ICI,tumour,irAE,indication,immortal_time_bias, nrow = 1, widths = c(8,2,1,2,1,1,1,1,1)
+          # ,labels = c("\nOverall Survival", "\nHR (95% CI)", "\nn", "dose\ncut-off", "\nICI", "tumour\n", "\nirAE", "indication\n", "\nimmortal time")
+          # ,label.x = 0.5, hjust = 0.5, label.y = 1.1
+          ,font.label = list(size =textsize, face = "bold")
+          ,common.legend = T, legend = "none"
+          ) + theme(plot.margin = unit(c(0.5,0.4,0,0), units = "strwidth", data = "immortal time")
+          )
+forrest_GC_OS
+```
+
+## glucocorticoids - PFS
+
+Repeat all above for the PFS plot.
+```{r echo = T, eval = T, warning = T, error=T, message=T}
+data <- data_backup
+data<- data[!is.na(data$n_PFS),]
+n_max_subset = max(data$n_PFS, na.rm = T)
+
+
+forrest_base <- ggplot(data, aes(y = label))+
+  geom_vline(aes(xintercept=1), linetype = "longdash", color = "darkgrey")+
+  scale_size_area(sizelegendtitle, max_size = 6*n_max_subset/n_max_total)+
+  scale_x_continuous(trans = "log10")+
+  coord_cartesian(xlim = c(.1,10), expand = T)+
+  scale_fill_viridis_c(colorlegendtitle, direction = 1)+
+  # scale_fill_viridis_d()+
+  theme(legend.position = "none"
+        # ,legend.key = element_rect(fill = "white")
+        ,plot.title = element_text(hjust =0.5, size=textsize, face = "bold")
+        ,panel.background = element_blank()
+        # ,panel.grid.major = element_line(color = "lightgrey")
+        ,axis.line.x = element_line(color = "black")
+        ,axis.ticks.y = element_blank()
+        ,axis.text.y = element_text(size = textsize, face = "bold", color = "black")
+        ,axis.title.y = element_blank()
+        ,axis.text.x = element_text(size = textsize, color = "black")
+        ,axis.title.x = element_text(size = textsize)
+        # ,plot.margin=unit(c(5,0,0,0), units = "lines")
+  )
+
+tab_base <- ggplot(data, aes(x=1, y=label)) +
+  labs(y=NULL, x= " ") + 
+  theme(legend.position="none"
+        ,plot.title = element_text(hjust=0.5, size=textsize, face = "bold") ## centering title on text
+        ,axis.text.x=element_text(color="white", size = textsize) ## need text to be printed so it stays aligned with figure but white so it's invisible
+        ,axis.title.x=element_text(color="white", size = textsize)
+        ,axis.line=element_blank()
+        ,axis.text.y=element_blank()
+        ,axis.title.y=element_blank()
+        ,panel.background=element_blank()
+        ,axis.ticks=element_blank()
+        # ,plot.margin=unit(c(30,0,0,0), units = "points")
+  )
+
+dot_base <- ggplot(data, aes(x=1, y=label)) +
+  labs(y=NULL, x= " ") + 
+  scale_colour_manual(values = c("+"="#02C100", "-"="#E2DF07", "X"="#BF0000", "?"="#4EA1F7"))+
+  theme(legend.position="none"
+        ,plot.title = element_text(hjust=0.5, size=textsize, face = "bold") ## centering title on text
+        ,axis.text.x=element_text(color="white", size = textsize) ## need text to be printed so it stays aligned with figure but white so it's invisible
+        ,axis.title.x=element_text(color="white", size = textsize)
+        ,axis.line=element_blank()
+        ,axis.text.y=element_blank()
+        ,axis.title.y=element_blank()
+        ,panel.background=element_blank()
+        ,axis.ticks=element_blank()
+        # ,plot.margin=unit(c(30,0,0,0), units = "points")
+  )
+
+p <- forrest_base +
+  geom_linerange(aes(xmin = HR_PFS_CI_lower, xmax = HR_PFS_CI_upper)
+  ) + geom_point(aes(x = HR_PFS
+                     , size = n_PFS
+                     # , fill = IS_dose_70
+                     )
+                 , shape = 22
+                 , fill = "black"
+  ) + scale_y_discrete(labels = labels
+  ) + labs(x = "hazard ratio (95% CI)"
+           ,title = "Progression Free Survival"
+  )
+
+if (nrow(data[data$HR_PFS_CI_upper>10,])>0){
+  p <- p + 
+    geom_segment(data = data[data$HR_PFS_CI_upper>10,]
+                 ,aes(x = HR_PFS_CI_lower, xend = Inf, yend = label)
+                 ,arrow=arrow(length = unit(.3, "cm"), type = "closed")
+    )
+}
+
+n <- tab_base + 
+  geom_text(aes(label = n_PFS)
+  ) + labs(title = "n"
+  )
+
+HR <- tab_base +
+  geom_text(aes(label = paste0(format(round(HR_PFS,2),nsmall=2,scientific=FALSE)," (",format(round(HR_PFS_CI_lower,2),nsmall=2,scientific=FALSE),"; ", format(round(HR_PFS_CI_upper,2),nsmall=2,scientific=FALSE),")"))
+  ) + labs(title = "HR (95% CI)"
+  )
+
+dose <- tab_base +
+  geom_text(aes(label = IS_dose)
+  ) + labs(title = "dose cut-off"
+  )
+
+ICI <-dot_base +
+  geom_point(aes(color = ICI_homogeneous), size = pointsize, shape = 16
+  ) + geom_text(aes(label = ICI_homogeneous), fontface = "bold"
+  ) + labs(title = "ICI"
+  )
+
+tumour <- dot_base +
+  geom_point(aes(color = tumour_homogeneous), size = pointsize, shape = 16
+  ) + geom_text(aes(label = tumour_homogeneous), fontface = "bold"
+  ) + labs(title = "tumour"
+  )
+
+irAE <- dot_base +
+  geom_point(aes(color = irAE_homogeneous), size = pointsize, shape = 16
+  ) + geom_text(aes(label = irAE_homogeneous), fontface = "bold"
+  ) + labs(title = "irAE type"
+  )
+
+indication <- dot_base +
+  geom_point(aes(color = indication_IS_irAE), size = pointsize, shape = 16
+  ) + geom_text(aes(label =indication_IS_irAE), fontface = "bold"
+  ) + labs(title = "indication=irAE"
+  )
+
+immortal_time_bias <- dot_base +
+  geom_point(aes(color = immortal_time_bias), size = pointsize, shape = 16
+  ) + geom_text(aes(label =immortal_time_bias), fontface = "bold"
+  ) + labs(title = "immortal time"
+  )
+
+forrest_GC_PFS <- ggarrange(p,HR,n,dose,ICI,tumour,irAE,indication,immortal_time_bias, nrow = 1, widths = c(8,2,1,2,1,1,1,1,1)
+          # ,labels = c("\nProgression Free Survival", "\nHR (95% CI)", "\nn", "dose\ncut-off", "\nICI", "tumour\n", "\nirAE", "indication\n", "\nimmortal time")
+          # ,label.x = 0.5, hjust = 0.5, label.y = 1.1
+          # ,font.label = list(size =textsize, face = "bold")
+) + theme(plot.margin = unit(c(0.5,0.4,0,0), units = "strwidth", data = "immortal time")
+          )
+forrest_GC_PFS
+```
+
+## glucocorticoids - merge and save
+
+Now we merge the OS and PFS plots
+```{r echo = T, eval = T, warning = T, error=T, message=T}
+data <- data_backup
+
+p_GC_total <- ggarrange(forrest_GC_OS, forrest_GC_PFS, ncol=1
+          ,heights = c(nrow(data[!is.na(data$n_OS),])+1.5, nrow(data[!is.na(data$n_PFS),])+1.5)
+          )
+p_GC_total
+```
+
+And we save them with the appropriate dimensions
+```{r echo = T, eval = F, warning = T, error=T, message=T}
+ggsave("review_IS_ICI_forrestplot_CS.jpg"
+       , plot = p_GC_total
+       , width = 13.5, height = 9, units = "in"
+       , dpi = 1200
+       )
+```
+
+# 2nd line immunosuppression
+
+Similarly, we can make Figure 3.
+
+
+```{r echo = T, eval = T, warning = T, error=T, message=T}
+data <- `2L_IS`
+
+data <- data.frame(data)
+labels <- lapply(1:nrow(data), FUN = function(x) bquote(.(as.character(data[x,"label"])) ^ .(as.character(data[x,"ref"]))))
+names(labels) <- data$label
+
+# colnames(data)
+dot <- c("control_group", "ICI_homogeneous", "tumour_homogeneous", "irAE_homogeneous", "indication_IS_irAE", 'immortal_time_bias')
+
+for (i in dot){
+  data$i<- data.frame(data)[,i]
+  data[,i]<- factor(dplyr::recode(data$i,
+                                  "low"="+", "Low"="+",
+                                  "some concerns"="-", "Some concerns"="-", "Some Concerns"="-", "intermediate"="-", "Intermediate"="-", "adjusted"="-", "Adjusted"="-",
+                                  "high"="X", "High"="X",
+                                  "unclear"="?", "Unclear"="?", "no information"="?", "No information"="?", "No Information"="?")
+                    , levels = c("+", "-", "X", "?"))
+  data$i <- NULL
+}
+```
+
+## 2nd line IS - OS
+
+```{r echo = T, eval = T, warning = T, error=T, message=T}
+data_backup <- data
+data<- data[!is.na(data$n_OS),]
+n_max_subset = max(data$n_OS, na.rm = T)
+
+forrest_base <- ggplot(data, aes(y = label))+
+  geom_vline(aes(xintercept=1), linetype = "longdash", color = "darkgrey")+
+  scale_size_area(sizelegendtitle, max_size = 6*n_max_subset/n_max_total)+
+  scale_x_continuous(trans = "log10")+
+  coord_cartesian(xlim = c(.1,10), expand = T)+
+  scale_fill_viridis_c(colorlegendtitle, direction = 1)+
+  # scale_fill_viridis_d()+
+  theme(legend.position = "none"
+        # ,legend.key = element_rect(fill = "white")
+        ,plot.title = element_text(hjust =0.5, size=textsize, face = "bold")
+        ,panel.background = element_blank()
+        # ,panel.grid.major = element_line(color = "lightgrey")
+        ,axis.line.x = element_line(color = "black")
+        ,axis.ticks.y = element_blank()
+        ,axis.text.y = element_text(size = textsize, face = "bold", color = "black")
+        ,axis.title.y = element_blank()
+        ,axis.text.x = element_text(size = textsize, color = "black")
+        ,axis.title.x = element_text(size = textsize)
+        # ,plot.margin=unit(c(5,0,0,0), units = "lines")
+  )
+
+tab_base <- ggplot(data, aes(x=1, y=label)) +
+  labs(y=NULL, x= " ") + 
+  theme(legend.position="none"
+        ,plot.title = element_text(hjust=0.5, size=textsize, face = "bold") ## centering title on text
+        ,axis.text.x=element_text(color="white", size = textsize) ## need text to be printed so it stays aligned with figure but white so it's invisible
+        ,axis.title.x=element_text(color="white", size = textsize)
+        ,axis.line=element_blank()
+        ,axis.text.y=element_blank()
+        ,axis.title.y=element_blank()
+        ,panel.background=element_blank()
+        ,axis.ticks=element_blank()
+        # ,plot.margin=unit(c(30,0,0,0), units = "points")
+  )
+
+dot_base <- ggplot(data, aes(x=1, y=label)) +
+  labs(y=NULL, x= " ") + 
+  scale_colour_manual(values = c("+"="#02C100", "-"="#E2DF07", "X"="#BF0000", "?"="#4EA1F7"))+
+  theme(legend.position="none"
+        ,plot.title = element_text(hjust=0.5, size=textsize, face = "bold") ## centering title on text
+        ,axis.text.x=element_text(color="white", size = textsize) ## need text to be printed so it stays aligned with figure but white so it's invisible
+        ,axis.title.x=element_text(color="white", size = textsize)
+        ,axis.line=element_blank()
+        ,axis.text.y=element_blank()
+        ,axis.title.y=element_blank()
+        ,panel.background=element_blank()
+        ,axis.ticks=element_blank()
+        # ,plot.margin=unit(c(30,0,0,0), units = "points")
+  )
+
+p <- forrest_base +
+  geom_linerange(aes(xmin = HR_OS_CI_lower, xmax = HR_OS_CI_upper)
+  ) + geom_point(aes(x = HR_OS
+                     , size = n_OS
+                     # , fill = IS_dose_70
+  )
+  , shape = 22
+  , fill = "black"
+  ) + scale_y_discrete(labels = labels
+  ) + labs(x = "hazard ratio (95% CI)"
+           ,title = "Overall Survival"
+  )
+
+if(nrow(data[data$HR_OS_CI_upper>10,])>0){
+  p<- p + 
+    geom_segment(data = data[data$HR_OS_CI_upper>10,]
+                 ,aes(x = HR_OS_CI_lower, xend = Inf, yend = label)
+                 ,arrow=arrow(length = unit(.3, "cm"), type = "closed")
+    )
+}
+
+n <- tab_base + 
+  geom_text(aes(label = n_OS)
+  ) + labs(title = "n"
+  )
+
+HR <- tab_base +
+  geom_text(aes(label = paste0(format(round(HR_OS,2),nsmall=2,scientific=FALSE)," (",format(round(HR_OS_CI_lower,2),nsmall=2,scientific=FALSE),"; ", format(round(HR_OS_CI_upper,2),nsmall=2,scientific=FALSE),")"))
+  ) + labs(title = "HR (95% CI)"
+  )
+
+dose <- tab_base +
+  geom_text(aes(label = IS_dose)
+  ) + labs(title = "comparison"
+  )
+
+ICI <-dot_base +
+  geom_point(aes(color = ICI_homogeneous), size = pointsize, shape = 16
+  ) + geom_text(aes(label = ICI_homogeneous), fontface = "bold"
+  ) + labs(title = "ICI"
+  )
+
+tumour <- dot_base +
+  geom_point(aes(color = tumour_homogeneous), size = pointsize, shape = 16
+  ) + geom_text(aes(label = tumour_homogeneous), fontface = "bold"
+  ) + labs(title = "tumour"
+  )
+
+irAE <- dot_base +
+  geom_point(aes(color = irAE_homogeneous), size = pointsize, shape = 16
+  ) + geom_text(aes(label = irAE_homogeneous), fontface = "bold"
+  ) + labs(title = "irAE type"
+  )
+
+indication <- dot_base +
+  geom_point(aes(color = indication_IS_irAE), size = pointsize, shape = 16
+  ) + geom_text(aes(label =indication_IS_irAE), fontface = "bold"
+  ) + labs(title = "indication=irAE"
+  )
+
+immortal_time_bias <- dot_base +
+  geom_point(aes(color = immortal_time_bias), size = pointsize, shape = 16
+  ) + geom_text(aes(label =immortal_time_bias), fontface = "bold"
+  ) + labs(title = "immortal time"
+  )
+
+forrest_2LIS_OS <- ggarrange(p,HR,n,dose,ICI,tumour,irAE,indication,immortal_time_bias, nrow = 1, widths = c(8,2,1,3,1,1,1,1,1)
+                           # ,labels = c("\nOverall Survival", "\nHR (95% CI)", "\nn", "dose\ncut-off", "\nICI", "tumour\n", "\nindication", "immortal time\n")
+                           # ,label.x = 0.5, hjust = 0.5, label.y = 1.1
+                           ,font.label = list(size =textsize, face = "bold")
+                           ,common.legend = T, legend = "none"
+) + theme(plot.margin = unit(c(0.5,0.4,0,0), units = "strwidth", data = "immortal time")
+)
+forrest_2LIS_OS
+```
+
+## 2nd line IS - OS
+
+```{r echo = T, eval = T, warning = T, error=T, message=T}
+data <- data_backup
+data<- data[!is.na(data$n_PFS),]
+n_max_subset = max(data$n_PFS, na.rm = T)
+
+
+forrest_base <- ggplot(data, aes(y = label))+
+  geom_vline(aes(xintercept=1), linetype = "longdash", color = "darkgrey")+
+  scale_size_area(sizelegendtitle, max_size = 6*n_max_subset/n_max_total)+
+  scale_x_continuous(trans = "log10")+
+  coord_cartesian(xlim = c(.1,10), expand = T)+
+  scale_fill_viridis_c(colorlegendtitle, direction = 1)+
+  # scale_fill_viridis_d()+
+  theme(legend.position = "none"
+        # ,legend.key = element_rect(fill = "white")
+        ,plot.title = element_text(hjust =0.5, size=textsize, face = "bold")
+        ,panel.background = element_blank()
+        # ,panel.grid.major = element_line(color = "lightgrey")
+        ,axis.line.x = element_line(color = "black")
+        ,axis.ticks.y = element_blank()
+        ,axis.text.y = element_text(size = textsize, face = "bold", color = "black")
+        ,axis.title.y = element_blank()
+        ,axis.text.x = element_text(size = textsize, color = "black")
+        ,axis.title.x = element_text(size = textsize)
+        # ,plot.margin=unit(c(5,0,0,0), units = "lines")
+  )
+
+tab_base <- ggplot(data, aes(x=1, y=label)) +
+  labs(y=NULL, x= " ") + 
+  theme(legend.position="none"
+        ,plot.title = element_text(hjust=0.5, size=textsize, face = "bold") ## centering title on text
+        ,axis.text.x=element_text(color="white", size = textsize) ## need text to be printed so it stays aligned with figure but white so it's invisible
+        ,axis.title.x=element_text(color="white", size = textsize)
+        ,axis.line=element_blank()
+        ,axis.text.y=element_blank()
+        ,axis.title.y=element_blank()
+        ,panel.background=element_blank()
+        ,axis.ticks=element_blank()
+        # ,plot.margin=unit(c(30,0,0,0), units = "points")
+  )
+
+dot_base <- ggplot(data, aes(x=1, y=label)) +
+  labs(y=NULL, x= " ") + 
+  scale_colour_manual(values = c("+"="#02C100", "-"="#E2DF07", "X"="#BF0000", "?"="#4EA1F7"))+
+  theme(legend.position="none"
+        ,plot.title = element_text(hjust=0.5, size=textsize, face = "bold") ## centering title on text
+        ,axis.text.x=element_text(color="white", size = textsize) ## need text to be printed so it stays aligned with figure but white so it's invisible
+        ,axis.title.x=element_text(color="white", size = textsize)
+        ,axis.line=element_blank()
+        ,axis.text.y=element_blank()
+        ,axis.title.y=element_blank()
+        ,panel.background=element_blank()
+        ,axis.ticks=element_blank()
+        # ,plot.margin=unit(c(30,0,0,0), units = "points")
+  )
+
+p <- forrest_base +
+  geom_linerange(aes(xmin = HR_PFS_CI_lower, xmax = HR_PFS_CI_upper)
+  ) + geom_point(aes(x = HR_PFS
+                     , size = n_PFS
+                     # , fill = IS_dose_70
+  )
+  , shape = 22
+  , fill = "black"
+  ) + scale_y_discrete(labels = labels
+  ) + labs(x = "hazard ratio (95% CI)"
+           ,title = "Progression Free Survival"
+  )
+
+if (nrow(data[data$HR_PFS_CI_upper>10,])>0){
+  p <- p + 
+    geom_segment(data = data[data$HR_PFS_CI_upper>10,]
+                 ,aes(x = HR_PFS_CI_lower, xend = Inf, yend = label)
+                 ,arrow=arrow(length = unit(.3, "cm"), type = "closed")
+    )
+}
+
+n <- tab_base + 
+  geom_text(aes(label = n_PFS)
+  ) + labs(title = "n"
+  )
+
+HR <- tab_base +
+  geom_text(aes(label = paste0(format(round(HR_PFS,2),nsmall=2,scientific=FALSE)," (",format(round(HR_PFS_CI_lower,2),nsmall=2,scientific=FALSE),"; ", format(round(HR_PFS_CI_upper,2),nsmall=2,scientific=FALSE),")"))
+  ) + labs(title = "HR (95% CI)"
+  )
+
+dose <- tab_base +
+  geom_text(aes(label = IS_dose)
+  ) + labs(title = "comparison"
+  )
+
+ICI <-dot_base +
+  geom_point(aes(color = ICI_homogeneous), size = pointsize, shape = 16
+  ) + geom_text(aes(label = ICI_homogeneous), fontface = "bold"
+  ) + labs(title = "ICI"
+  )
+
+tumour <- dot_base +
+  geom_point(aes(color = tumour_homogeneous), size = pointsize, shape = 16
+  ) + geom_text(aes(label = tumour_homogeneous), fontface = "bold"
+  ) + labs(title = "tumour"
+  )
+
+irAE <- dot_base +
+  geom_point(aes(color = irAE_homogeneous), size = pointsize, shape = 16
+  ) + geom_text(aes(label = irAE_homogeneous), fontface = "bold"
+  ) + labs(title = "irAE type"
+  )
+
+indication <- dot_base +
+  geom_point(aes(color = indication_IS_irAE), size = pointsize, shape = 16
+  ) + geom_text(aes(label =indication_IS_irAE), fontface = "bold"
+  ) + labs(title = "indication=irAE"
+  )
+
+immortal_time_bias <- dot_base +
+  geom_point(aes(color = immortal_time_bias), size = pointsize, shape = 16
+  ) + geom_text(aes(label =immortal_time_bias), fontface = "bold"
+  ) + labs(title = "immortal time"
+  )
+
+forrest_2LIS_PFS <- ggarrange(p,HR,n,dose,ICI,tumour,irAE,indication,immortal_time_bias, nrow = 1, widths = c(8,2,1,3,1,1,1,1,1)
+                            # ,labels = c("\nProgression Free Survival", "\nHR (95% CI)", "\nn", "dose\ncut-off", "\nICI", "tumour\n", "\nindication", "immortal time\n")
+                            # ,label.x = 0.5, hjust = 0.5, label.y = 1.1
+                            # ,font.label = list(size =textsize, face = "bold")
+) + theme(plot.margin = unit(c(0.5,0.4,0,0), units = "strwidth", data = "immortal time")
+)
+forrest_2LIS_PFS
+```
+
+## 2nd line IS - merge and save
+
+Merge
+```{r echo = T, eval = T, warning = T, error=T, message=T}
+data <- data_backup
+
+p_2L_total <- ggarrange(forrest_2LIS_OS, forrest_2LIS_PFS, ncol=1
+          ,heights = c(nrow(data[!is.na(data$n_OS),])+1.5, nrow(data[!is.na(data$n_PFS),])+1.5)
+          )
+p_2L_total
+```
+
+Save
+```{r echo = T, eval = F, warning = T, error=T, message=T}
+ggsave("review_IS_ICI_forrestplot_2L.jpg"
+       , plot = p_2L_total
+       , width = 13.5, height = 4.8, units = "in"
+       , dpi = 1200
+       )
+```
+
+# R version and packages
+```{r echo = T, eval = T, warning = T, error = T, message = T}
+sessionInfo()
+```
